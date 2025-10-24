@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expense Analyzer</title>
+    
+    <!-- PWA Links -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#4a90e2">
+    
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 15px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        h1, h2 {
+            text-align: center;
+            color: #333;
+        }
+        #app-container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        
+        /* Import Screen */
+        #import-screen {
+            text-align: center;
+            padding: 40px 20px;
+        }
+        #import-btn-label {
+            display: inline-block;
+            background-color: #007aff;
+            color: white;
+            padding: 15px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #import-btn-label:hover { background-color: #0056b3; }
+        #import-file { display: none; }
+        #import-screen p { color: #666; font-size: 14px; }
+
+        /* Dashboard (Hidden by default) */
+        #dashboard { display: none; }
+        .section { margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; }
+        
+        /* Chart Toggles */
+        .chart-toggle {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .chart-toggle button {
+            background-color: #e9e9eb;
+            color: #333;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .chart-toggle button.active {
+            background-color: #007aff;
+            color: white;
+        }
+
+        /* General UI Elements */
+        input[type="date"] {
+            width: 100%;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-sizing: border-box;
+        }
+        .comparison-stats {
+            text-align: center;
+            font-size: 1.1em;
+            margin-bottom: 15px;
+        }
+        .comparison-stats .diff { font-weight: bold; }
+        .comparison-stats .diff.positive { color: #d9534f; }
+        .comparison-stats .diff.negative { color: #5cb85c; }
+        
+        .chart-container {
+            width: 100%;
+            min-height: 250px;
+            position: relative;
+        }
+        .placeholder-text {
+            text-align:center; color:#999; padding: 20px;
+        }
+        
+        /* Reset Data Button */
+        #reset-data-btn {
+            display: block;
+            width: 100%;
+            background-color: #d9534f;
+            color: white;
+            border: none;
+            padding: 12px;
+            font-size: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        
+        <!-- Screen 1: Import -->
+        <div id="import-screen">
+            <h1>Expense Analyzer</h1>
+            <p>Import your `expenses.csv` file from the tracker app to get started.</p>
+            <label for="import-file" id="import-btn-label">Import expenses.csv</label>
+            <input type="file" id="import-file" accept=".csv">
+        </div>
+
+        <!-- Screen 2: Dashboard -->
+        <div id="dashboard">
+            <h1>Analysis Dashboard</h1>
+
+            <!-- Daily Drill-Down -->
+            <div class="section">
+                <h2>Daily Drill-Down</h2>
+                <input type="date" id="daily-date-picker">
+                
+                <div class="chart-toggle" id="daily-chart-toggle">
+                    <button class="active" data-type="pie">Pie</button>
+                    <button data-type="bar">Bar</button>
+                </div>
+                
+                <div class="chart-container" id="daily-chart-container">
+                    <canvas id="daily-chart"></canvas>
+                    <p class="placeholder-text" id="daily-placeholder">Select a date to see your spending.</p>
+                </div>
+            </div>
+
+            <!-- Spending Comparison -->
+            <div class="section">
+                <h2>Spending Comparison</h2>
+                <div class="chart-toggle" id="comparison-toggle">
+                    <button class="active" data-type="weekly">Weekly</button>
+                    <button data-type="monthly">Monthly</button>
+                </div>
+
+                <div class="comparison-stats" id="comparison-stats">
+                    <!-- Stats will be injected here -->
+                </div>
+                
+                <div class="chart-container" id="comparison-chart-container">
+                    <canvas id="comparison-chart"></canvas>
+                    <p class="placeholder-text" id="comparison-placeholder">No comparison data available.</p>
+                </div>
+            </div>
+            
+            <button id="reset-data-btn">Clear Data & Re-Import</button>
+        </div>
+
+    </div>
+
+    <script>
+        // Register the service worker
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js').then(registration => {
+              console.log('Analyzer ServiceWorker registration successful');
+            }, err => {
+              console.log('Analyzer ServiceWorker registration failed: ', err);
+            });
+          });
+        }
+        
+        document.addEventListener("DOMContentLoaded", () => {
+            // --- DOM Elements ---
+            const importScreen = document.getElementById('import-screen');
+            const dashboard = document.getElementById('dashboard');
+            const importFile = document.getElementById('import-file');
+            const dailyDatePicker = document.getElementById('daily-date-picker');
+            const dailyChartToggle = document.getElementById('daily-chart-toggle');
+            const dailyChartContainer = document.getElementById('daily-chart-container');
+            const dailyCanvas = document.getElementById('daily-chart');
+            const dailyPlaceholder = document.getElementById('daily-placeholder');
+            const comparisonToggle = document.getElementById('comparison-toggle');
+            const comparisonStats = document.getElementById('comparison-stats');
+            const comparisonCanvas = document.getElementById('comparison-chart');
+            const comparisonPlaceholder = document.getElementById('comparison-placeholder');
+            const resetDataBtn = document.getElementById('reset-data-btn');
+
+            let allExpenses = [];
+            let dailyChartInstance;
+            let comparisonChartInstance;
+            
+            // --- Chart Colors ---
+            const CHART_COLORS = [
+                'rgba(0, 122, 255, 0.7)', 'rgba(52, 199, 89, 0.7)',
+                'rgba(255, 149, 0, 0.7)', 'rgba(88, 86, 214, 0.7)',
+                'rgba(255, 45, 85, 0.7)', 'rgba(175, 82, 222, 0.7)',
+                'rgba(255, 59, 48, 0.7)', 'rgba(90, 200, 250, 0.7)',
+                'rgba(255, 204, 0, 0.7)'
+            ];
+
+            // --- Data & App State ---
+            const loadData = () => {
+                const storedData = localStorage.getItem('analyzer_expenses');
+                if (storedData) {
+                    allExpenses = JSON.parse(storedData).map(e => ({...e, dateObj: new Date(e.date)}));
+                    showDashboard();
+                } else {
+                    showImportScreen();
+                }
+            };
+
+            const saveData = () => {
+                localStorage.setItem('analyzer_expenses', JSON.stringify(allExpenses));
+            };
+
+            const showDashboard = () => {
+                importScreen.style.display = 'none';
+                dashboard.style.display = 'block';
+                dailyDatePicker.valueAsDate = new Date();
+                renderDailyChart();
+                renderComparisonChart();
+            };
+
+            const showImportScreen = () => {
+                importScreen.style.display = 'block';
+                dashboard.style.display = 'none';
+            };
+
+            resetDataBtn.addEventListener('click', () => {
+                if (confirm("Are you sure you want to clear all data? You will need to re-import your CSV.")) {
+                    localStorage.removeItem('analyzer_expenses');
+                    allExpenses = [];
+                    if(dailyChartInstance) dailyChartInstance.destroy();
+                    if(comparisonChartInstance) comparisonChartInstance.destroy();
+                    showImportScreen();
+                }
+            });
+
+            // --- CSV Parsing ---
+            importFile.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const text = event.target.result;
+                    parseCSV(text);
+                };
+                reader.readAsText(file);
+            });
+
+            const parseCSV = (text) => {
+                try {
+                    const rows = text.split('\n');
+                    const headers = rows[0].trim().toLowerCase().split(',').map(h => h.replace(/"/g, ''));
+                    
+                    // Find the column indices intelligently
+                    const dateIndex = headers.indexOf('date');
+                    const categoryIndex = headers.indexOf('category');
+                    const amountIndex = headers.indexOf('amount');
+
+                    if (dateIndex === -1 || categoryIndex === -1 || amountIndex === -1) {
+                        alert("Error: CSV file must contain 'Date', 'Category', and 'Amount' headers.");
+                        return;
+                    }
+
+                    allExpenses = rows.slice(1).map(row => {
+                        if (!row) return null;
+                        const columns = row.split(',');
+                        return {
+                            date: columns[dateIndex].replace(/"/g, ''),
+                            category: columns[categoryIndex].replace(/"/g, ''),
+                            amount: parseFloat(columns[amountIndex])
+                        };
+                    }).filter(e => e && e.date && e.category && !isNaN(e.amount));
+                    
+                    saveData();
+                    loadData();
+                } catch (error) {
+                    alert("An error occurred while parsing the file. Please ensure it is a valid CSV.");
+                    console.error("CSV Parse Error:", error);
+                }
+            };
+            
+            // --- Helper Functions ---
+            const getExpensesForDate = (dateString) => {
+                return allExpenses.filter(e => e.date === dateString);
+            };
+
+            const getExpensesForRange = (start, end) => {
+                return allExpenses.filter(e => e.dateObj >= start && e.dateObj <= end);
+            };
+
+            const groupByCategory = (expenses) => {
+                return expenses.reduce((acc, e) => {
+                    acc[e.category] = (acc[e.category] || 0) + e.amount;
+                    return acc;
+                }, {});
+            };
+
+            // --- Daily Chart ---
+            const renderDailyChart = () => {
+                const dateString = dailyDatePicker.value;
+                const dailyExpenses = getExpensesForDate(dateString);
+                
+                if (dailyExpenses.length === 0) {
+                    dailyCanvas.style.display = 'none';
+                    dailyPlaceholder.style.display = 'block';
+                    return;
+                }
+                dailyCanvas.style.display = 'block';
+                dailyPlaceholder.style.display = 'none';
+
+                const groupedData = groupByCategory(dailyExpenses);
+                const labels = Object.keys(groupedData);
+                const data = Object.values(groupedData);
+                const chartType = dailyChartToggle.querySelector('.active').dataset.type;
+
+                if (dailyChartInstance) dailyChartInstance.destroy();
+                dailyChartInstance = new Chart(dailyCanvas.getContext('2d'), {
+                    type: chartType,
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Spending',
+                            data: data,
+                            backgroundColor: CHART_COLORS,
+                            borderWidth: (chartType === 'pie') ? 0 : 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                display: (chartType === 'pie'),
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                });
+            };
+            
+            dailyDatePicker.addEventListener('input', renderDailyChart);
+            dailyChartToggle.addEventListener('click', (e) => {
+                if(e.target.tagName === 'BUTTON') {
+                    dailyChartToggle.querySelector('.active').classList.remove('active');
+                    e.target.classList.add('active');
+                    renderDailyChart();
+                }
+            });
+
+            // --- Comparison Chart ---
+            const renderComparisonChart = () => {
+                const comparisonType = comparisonToggle.querySelector('.active').dataset.type;
+                const now = new Date();
+                let currentStart, currentEnd, prevStart, prevEnd;
+                let currentLabel, prevLabel;
+
+                if (comparisonType === 'weekly') {
+                    const dayOfWeek = now.getDay();
+                    currentEnd = new Date(now.setHours(23, 59, 59, 999));
+                    currentStart = new Date(currentEnd.getTime() - (dayOfWeek * 24 * 60 * 60 * 1000));
+                    currentStart.setHours(0, 0, 0, 0);
+                    
+                    prevEnd = new Date(currentStart.getTime() - 1);
+                    prevStart = new Date(prevEnd.getTime() - (6 * 24 * 60 * 60 * 1000));
+                    prevStart.setHours(0, 0, 0, 0);
+                    
+                    currentLabel = "This Week";
+                    prevLabel = "Last Week";
+                } else { // monthly
+                    currentEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+                    currentStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                    
+                    prevEnd = new Date(currentStart.getTime() - 1);
+                    prevStart = new Date(prevEnd.getFullYear(), prevEnd.getMonth(), 1);
+                    
+                    currentLabel = "This Month";
+                    prevLabel = "Last Month";
+                }
+
+                const currentExpenses = getExpensesForRange(currentStart, currentEnd);
+                const prevExpenses = getExpensesForRange(prevStart, prevEnd);
+
+                const currentGrouped = groupByCategory(currentExpenses);
+                const prevGrouped = groupByCategory(prevExpenses);
+                
+                const currentTotal = Object.values(currentGrouped).reduce((a, b) => a + b, 0);
+                const prevTotal = Object.values(prevGrouped).reduce((a, b) => a + b, 0);
+                const diff = currentTotal - prevTotal;
+
+                comparisonStats.innerHTML = `
+                    <strong>${currentLabel}:</strong> ₹${currentTotal.toFixed(2)} | 
+                    <strong>${prevLabel}:</strong> ₹${prevTotal.toFixed(2)}<br>
+                    <span class="diff ${diff >= 0 ? 'positive' : 'negative'}">
+                        ${diff >= 0 ? '↑' : '↓'} ₹${Math.abs(diff).toFixed(2)} ${diff >= 0 ? 'more' : 'less'}
+                    </span>
+                `;
+
+                const allCategories = [...new Set([...Object.keys(currentGrouped), ...Object.keys(prevGrouped)])];
+                if (allCategories.length === 0) {
+                    comparisonCanvas.style.display = 'none';
+                    comparisonPlaceholder.style.display = 'block';
+                    return;
+                }
+                comparisonCanvas.style.display = 'block';
+                comparisonPlaceholder.style.display = 'none';
+                
+                if (comparisonChartInstance) comparisonChartInstance.destroy();
+                comparisonChartInstance = new Chart(comparisonCanvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: allCategories,
+                        datasets: [
+                            {
+                                label: currentLabel,
+                                data: allCategories.map(cat => currentGrouped[cat] || 0),
+                                backgroundColor: 'rgba(0, 122, 255, 0.7)',
+                                borderRadius: 5
+                            },
+                            {
+                                label: prevLabel,
+                                data: allCategories.map(cat => prevGrouped[cat] || 0),
+                                backgroundColor: 'rgba(233, 233, 235, 0.7)',
+                                borderRadius: 5
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: { x: { stacked: false }, y: { beginAtZero: true } }
+                    }
+                });
+            };
+
+            comparisonToggle.addEventListener('click', (e) => {
+                if(e.target.tagName === 'BUTTON') {
+                    comparisonToggle.querySelector('.active').classList.remove('active');
+                    e.target.classList.add('active');
+                    renderComparisonChart();
+                }
+            });
+
+            // --- Initial Load ---
+            loadData();
+        });
+    </script>
+
+</body>
+</html>
+
